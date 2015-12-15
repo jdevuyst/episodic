@@ -6,6 +6,8 @@ An opinionated logging library for Clojure.
 
 FIXME
 
+[![Clojars Project](http://clojars.org/episodic-log/latest-version.svg)]
+
 ## License
 
 Copyright © 2015 Jonas De Vuyst

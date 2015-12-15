@@ -42,6 +42,10 @@
 
 (def ^{:dynamic true :private true} *episode-ref*)
 
+(defmacro or-some
+  ([] nil)
+  ([x & next] `(if-some [x# ~x] x# (or-some ~@next))))
+
 (defmacro episode [[moniker opts] & body]
   (let [tag (keyword (name (ns-name *ns*)) (str moniker))
         opt-dict-name (gensym 'opts)
@@ -51,10 +55,10 @@
                             [k [(-> k name gensym) k t d]]))
         norm-opts (fn []
                     (-> (mapcat (fn [[s k t d]]
-                                  [s `(~t (or (~k ~opt-dict-name)
-                                              (~k (get @tag-options ~tag))
-                                              (~k @global-options)
-                                              ~d))])
+                                  [s `(~t (or-some (~k ~opt-dict-name)
+                                                   (~k (get @tag-options ~tag))
+                                                   (~k @global-options)
+                                                   ~d))])
                                 (vals all-opts))
                         (concat [opt-dict-name
                                  (into {} (for [[s k _ _] (vals all-opts)]
