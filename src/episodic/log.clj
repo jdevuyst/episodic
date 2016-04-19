@@ -10,20 +10,23 @@
   (let [s (-> d pp/pprint with-out-str)]
     (.substring s 0 (dec (.length s)))))
 
-(defn print-episode [f]
-  (let [m (f)
-        v #(str % \space (% m))
-        dv #(str % \space (inst-str (% m)))
-        pp (fn [t]
-             (when-let [v (t m)]
-               (println t)
-               (pp/pprint v)))]
-    (println (str \newline  "{" (v :tag)) (v :arc) (dv :start))
-    (pp :summary)
-    (pp :error)
-    (println :options (update (:options m) :rethrow #(if (fn? %) :fn %)))
-    (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)
-    (.flush *out*)))
+(defn episode-writer []
+  *out*)
+
+(defn print-episode [m]
+  (binding [*out* (episode-writer)]
+    (let [v #(str % \space (% m))
+          dv #(str % \space (inst-str (% m)))
+          pp (fn [t]
+               (when-let [v (t m)]
+                 (println t)
+                 (pp/pprint v)))]
+      (println (str \newline  "{" (v :tag)) (v :arc) (dv :start))
+      (pp :summary)
+      (pp :error)
+      (println :options (update (:options m) :rethrow #(if (fn? %) :fn %)))
+      (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)
+      (.flush *out*))))
 
 (def print-pool (ThreadPoolExecutor. 0 1
                                      5 java.util.concurrent.TimeUnit/MINUTES
@@ -48,7 +51,7 @@
 
 (def tag-options (atom {:debug-this {:log-level-normal 9}}))
 
-(def ^:dynamic *episode*)
+(def ^:dynamic *log*)
 
 (defmacro or-some
   ([] nil)
@@ -69,53 +72,46 @@
                                             [k s]))])
                         vec))
         opt #(doto (-> all-opts % first) assert)]
-    `(let [~opt-dict-name ~opts
-           ~@(norm-opts)
-           start-nanos# (System/nanoTime)
-           close# (fn [m#] (assoc m#
-                             :sec (-> (System/nanoTime) (- start-nanos#) (/ 1e9) (max 0.001))
-                             :end (java.util.Date.)))]
-       (binding [*episode* (volatile! {:tag ~tag
-                                       :thread-id (.getId (Thread/currentThread))
-                                       :options ~opt-dict-name
-                                       :start (java.util.Date.)
-                                       :arc (gensym ~tag)
-                                       :log []})]
+    `(binding [*log* (-> [] transient volatile!)]
+       (let [~opt-dict-name ~opts
+             ~@(norm-opts)
+             start-time# (java.util.Date.)
+             start-nanos# (System/nanoTime)
+             episode# (promise)
+             compile# (fn [error#]
+                        (let [log# *log*
+                              end-nanos# (System/nanoTime)
+                              thread-id# (.getId (Thread/currentThread))]
+                          (delay (cond-> {:tag ~tag
+                                          :thread-id thread-id#
+                                          :options ~opt-dict-name
+                                          :start start-time#
+                                          :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
+                                          :end (java.util.Date.)
+                                          :summary (->> @log#
+                                                        persistent!
+                                                        (mapcat (partial take (if error#
+                                                                                ~(opt :log-level-error)
+                                                                                ~(opt :log-level-normal))))
+                                                        (reduce summarize))}
+                                         error# (assoc :error (Throwable->map error#))))))]
          (try
-           (let [r# (do ~@body)]
-             (vswap! *episode* close#)
-             r#)
+           ~@body
            (catch Throwable t#
-             (vswap! *episode* close#)
-             (->> t#
-                  Throwable->map
-                  (vswap! *episode* assoc :error))
+             (deliver episode# (compile# t#))
              (when-let [rt# ~(opt :rethrow)]
                (if (fn? rt#)
-                 (rt# @*episode*)
-                 (throw t#))))
-           (finally (-> (fn [m#]
-                          (assoc m#
-                            :summary (->> m#
-                                          :log
-                                          (mapcat (partial take (if (:error m#)
-                                                                  ~(opt :log-level-error)
-                                                                  ~(opt :log-level-normal))))
-                                          (reduce summarize))))
-                        (partial @*episode*)
-                        (->> (partial print-episode)
-                             (.execute print-pool)))))))))
+                 (rt# @@episode#)
+                 (throw (ex-info (str "rethrow in " ~tag)
+                                 {:episode @@episode#}
+                                 t#)))))
+           (finally
+             (deliver episode# (compile# nil))
+             (.execute print-pool #(print-episode @@episode#))))))))
 
 (defn note [& xs]
-  (vswap! *episode* update-in [:log] conj xs)
+  (vswap! *log* conj! xs)
   nil)
 
 (defn post [k & xs]
   (apply note (for [x xs] {k [x]})))
-
-(defn cont [tag f]
-  (let [ep @*episode*]
-    (fn [& args]
-      (episode [tag (:options ep)]
-               (vswap! *episode* assoc :arc (:arc ep))
-               (apply f args)))))
