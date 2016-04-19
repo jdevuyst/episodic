@@ -71,7 +71,10 @@
         opt #(doto (-> all-opts % first) assert)]
     `(let [~opt-dict-name ~opts
            ~@(norm-opts)
-           start-nanos# (System/nanoTime)]
+           start-nanos# (System/nanoTime)
+           close# (fn [m#] (assoc m#
+                             :sec (-> (System/nanoTime) (- start-nanos#) (/ 1e9) (max 0.001))
+                             :end (java.util.Date.)))]
        (binding [*episode-ref* (ref {:tag ~tag
                                      :thread-id (.getId (Thread/currentThread))
                                      :options ~opt-dict-name
@@ -80,7 +83,9 @@
                                      :log []})]
          (try
            ~@body
+           (dosync (alter *episode-ref* close#))
            (catch Throwable t#
+             (dosync (alter *episode-ref* close#))
              (->> t#
                   Throwable->map
                   (alter *episode-ref* assoc :error)
@@ -91,8 +96,6 @@
                  (throw t#))))
            (finally (-> (fn [m#]
                           (assoc m#
-                            :sec (-> (System/nanoTime) (- start-nanos#) (/ 1e9) (max 0.001))
-                            :end (java.util.Date.)
                             :summary (->> m#
                                           :log
                                           (mapcat (partial take (if (:error m#)
