@@ -72,15 +72,15 @@
                                      :log []})]
          (try
            ~@body
-           (catch Exception e#
-             (->> e#
+           (catch Throwable t#
+             (->> t#
                   Throwable->map
                   (alter *episode-ref* assoc :error)
                   dosync)
              (when-let [rt# ~(opt :rethrow)]
                (if (fn? rt#)
                  (rt# @*episode-ref*)
-                 (throw e#))))
+                 (throw t#))))
            (finally (->> (fn [m#]
                            (assoc m#
                              :sec (-> (System/nanoTime) (- start-nanos#) (/ 1000000000) double (max 0.001))
