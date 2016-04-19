@@ -82,8 +82,9 @@
                                        :arc (gensym ~tag)
                                        :log []})]
          (try
-           ~@body
-           (vswap! *episode* close#)
+           (let [r# (do ~@body)]
+             (vswap! *episode* close#)
+             r#)
            (catch Throwable t#
              (vswap! *episode* close#)
              (->> t#
