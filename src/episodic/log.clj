@@ -1,12 +1,14 @@
 (ns episodic.log
   (:require [clojure.pprint :as pp]
-            [clojure.stacktrace :as cs]))
+            [clojure.stacktrace :as cs])
+  (:import [java.util.concurrent
+            ThreadPoolExecutor
+            ThreadPoolExecutor$DiscardPolicy
+            ArrayBlockingQueue]))
 
 (defn- inst-str [d]
   (let [s (-> d pp/pprint with-out-str)]
     (.substring s 0 (dec (.length s)))))
-
-(def print-agent (agent nil))
 
 (defn print-episode [m]
   (let [v #(str % \space (% m))
@@ -21,6 +23,11 @@
     (println :options (update (:options m) :rethrow #(if (fn? %) :fn %)))
     (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)
     (.flush *out*)))
+
+(def print-pool (ThreadPoolExecutor. 0 1
+                                     5 java.util.concurrent.TimeUnit/MINUTES
+                                     (ArrayBlockingQueue. 8)
+                                     (ThreadPoolExecutor$DiscardPolicy.)))
 
 (defn merge-fn [x y]
   (cond (coll? x) (into x y)
@@ -83,7 +90,7 @@
                  (throw t#))))
            (finally (->> (fn [m#]
                            (assoc m#
-                             :sec (-> (System/nanoTime) (- start-nanos#) (/ 1000000000) double (max 0.001))
+                             :sec (-> (System/nanoTime) (- start-nanos#) (/ 1e9) (max 0.001))
                              :end (java.util.Date.)
                              :summary (->> m#
                                            :log
@@ -93,7 +100,8 @@
                                            (reduce summarize))))
                          (alter *episode-ref*)
                          dosync
-                         (send print-agent #(print-episode %2)))))))))
+                         (partial print-episode)
+                         (.execute print-pool))))))))
 
 (defn note* [& xs]
   (alter *episode-ref* update-in [:log] conj xs)
