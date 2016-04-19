@@ -1,12 +1,10 @@
 (ns episodic.log
-  (:require [clojure.pprint :as cp]
+  (:require [clojure.pprint :as pp]
             [clojure.stacktrace :as cs]))
 
 (defn- inst-str [d]
-  (let [s (-> d cp/pprint with-out-str)]
+  (let [s (-> d pp/pprint with-out-str)]
     (.substring s 0 (dec (.length s)))))
-
-(def print-sep ";;\n")
 
 (def print-agent (agent nil))
 
@@ -15,12 +13,12 @@
         dv #(str % \space (inst-str (% m)))
         pp (fn [t]
              (when-let [v (t m)]
-               (print (str print-sep t \newline))
-               (cp/pprint v)))]
-    (println (str \newline  "{" (v :tag)) (dv :start))
+               (println t)
+               (pp/pprint v)))]
+    (println (str \newline  "{" (v :tag)) (v :arc) (dv :start))
     (pp :summary)
     (pp :error)
-    (println (str print-sep (v :options)))
+    (println :options (update (:options m) :rethrow #(if (fn? %) :fn %)))
     (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)
     (.flush *out*)))
 
@@ -36,29 +34,27 @@
               (catch IllegalArgumentException e
                 (merge-with into acc {::failed-to-merge [el]})))))
 
-(def global-options (atom {:rethrow true}))
+(def global-options (atom {:rethrow true
+                           :log-level-normal 1
+                           :log-level-error 9}))
 
-(def tag-options (atom {::blah {:log-level-normal 2}}))
+(def tag-options (atom {:debug-this {:log-level-normal 9}}))
 
-(def ^{:dynamic true :private true} *episode-ref*)
+(def ^:dynamic *episode-ref*)
 
 (defmacro or-some
   ([] nil)
   ([x & next] `(if-some [x# ~x] x# (or-some ~@next))))
 
-(defmacro episode [[moniker opts] & body]
-  (let [tag (keyword (name (ns-name *ns*)) (str moniker))
-        opt-dict-name (gensym 'opts)
-        all-opts (into {} (for [[k t d] [[:rethrow? boolean true]
-                                         [:log-level-normal int 1]
-                                         [:log-level-error int 9]]]
-                            [k [(-> k name gensym) k t d]]))
+(defmacro episode [[tag opts] & body]
+  (let [opt-dict-name (gensym 'opts)
+        all-opts (into {} (for [k [:rethrow :log-level-normal :log-level-error]]
+                            [k [(-> k name gensym) k]]))
         norm-opts (fn []
-                    (-> (mapcat (fn [[s k t d]]
-                                  [s `(~t (or-some (~k ~opt-dict-name)
-                                                   (~k (get @tag-options ~tag))
-                                                   (~k @global-options)
-                                                   ~d))])
+                    (-> (mapcat (fn [[s k]]
+                                  [s `(or-some (~k (get @tag-options ~tag))
+                                               (~k ~opt-dict-name)
+                                               (~k @global-options))])
                                 (vals all-opts))
                         (concat [opt-dict-name
                                  (into {} (for [[s k _ _] (vals all-opts)]
@@ -67,30 +63,27 @@
         opt #(doto (-> all-opts % first) assert)]
     `(let [~opt-dict-name ~opts
            ~@(norm-opts)
-           ~moniker (ref {:tag ~tag
-                          :thread-id (.getId (Thread/currentThread))
-                          :options ~opt-dict-name
-                          :start (java.util.Date.)
-                          :log []})
            start-nanos# (System/nanoTime)]
-       (binding [*episode-ref* ~moniker]
+       (binding [*episode-ref* (ref {:tag ~tag
+                                     :thread-id (.getId (Thread/currentThread))
+                                     :options ~opt-dict-name
+                                     :start (java.util.Date.)
+                                     :arc (gensym ~tag)
+                                     :log []})]
          (try
            ~@body
            (catch Exception e#
-             (-> e#
-                 cs/root-cause
-                 cp/pprint
-                 with-out-str
-                 str
-                 (.substring 7)
-                 read-string
-                 (->> (alter ~moniker assoc :error))
-                 dosync)
-             (when ~(opt :rethrow?)
-               (throw e#)))
+             (->> e#
+                  Throwable->map
+                  (alter *episode-ref* assoc :error)
+                  dosync)
+             (when-let [rt# ~(opt :rethrow)]
+               (if (fn? rt#)
+                 (rt# @*episode-ref*)
+                 (throw e#))))
            (finally (->> (fn [m#]
                            (assoc m#
-                             :sec (-> (System/nanoTime) (- start-nanos#) (/ 1000000000) double)
+                             :sec (-> (System/nanoTime) (- start-nanos#) (/ 1000000000) double (max 0.001))
                              :end (java.util.Date.)
                              :summary (->> m#
                                            :log
@@ -98,7 +91,7 @@
                                                                    ~(opt :log-level-error)
                                                                    ~(opt :log-level-normal))))
                                            (reduce summarize))))
-                         (alter ~moniker)
+                         (alter *episode-ref*)
                          dosync
                          (send print-agent #(print-episode %2)))))))))
 
@@ -114,3 +107,10 @@
 
 (defn post [k & xs]
   (dosync (apply post* k xs)))
+
+(defn cont [tag f]
+  (let [ep @*episode-ref*]
+    (fn [& args]
+      (episode [tag (:options ep)]
+               (dosync (alter *episode-ref* assoc :arc (:arc ep)))
+               (apply f args)))))
