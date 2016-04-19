@@ -48,7 +48,7 @@
 
 (def tag-options (atom {:debug-this {:log-level-normal 9}}))
 
-(def ^:dynamic *episode-ref*)
+(def ^:dynamic *episode*)
 
 (defmacro or-some
   ([] nil)
@@ -75,24 +75,23 @@
            close# (fn [m#] (assoc m#
                              :sec (-> (System/nanoTime) (- start-nanos#) (/ 1e9) (max 0.001))
                              :end (java.util.Date.)))]
-       (binding [*episode-ref* (ref {:tag ~tag
-                                     :thread-id (.getId (Thread/currentThread))
-                                     :options ~opt-dict-name
-                                     :start (java.util.Date.)
-                                     :arc (gensym ~tag)
-                                     :log []})]
+       (binding [*episode* (volatile! {:tag ~tag
+                                       :thread-id (.getId (Thread/currentThread))
+                                       :options ~opt-dict-name
+                                       :start (java.util.Date.)
+                                       :arc (gensym ~tag)
+                                       :log []})]
          (try
            ~@body
-           (dosync (alter *episode-ref* close#))
+           (vswap! *episode* close#)
            (catch Throwable t#
-             (dosync (alter *episode-ref* close#))
+             (vswap! *episode* close#)
              (->> t#
                   Throwable->map
-                  (alter *episode-ref* assoc :error)
-                  dosync)
+                  (vswap! *episode* assoc :error))
              (when-let [rt# ~(opt :rethrow)]
                (if (fn? rt#)
-                 (rt# @*episode-ref*)
+                 (rt# @*episode*)
                  (throw t#))))
            (finally (-> (fn [m#]
                           (assoc m#
@@ -102,26 +101,20 @@
                                                                   ~(opt :log-level-error)
                                                                   ~(opt :log-level-normal))))
                                           (reduce summarize))))
-                        (partial @*episode-ref*)
+                        (partial @*episode*)
                         (->> (partial print-episode)
                              (.execute print-pool)))))))))
 
-(defn note* [& xs]
-  (alter *episode-ref* update-in [:log] conj xs)
+(defn note [& xs]
+  (vswap! *episode* update-in [:log] conj xs)
   nil)
 
-(defn note [& xs]
-  (dosync (apply note* xs)))
-
-(defn post* [k & xs]
-  (apply note* (for [x xs] {k [x]})))
-
 (defn post [k & xs]
-  (dosync (apply post* k xs)))
+  (apply note (for [x xs] {k [x]})))
 
 (defn cont [tag f]
-  (let [ep @*episode-ref*]
+  (let [ep @*episode*]
     (fn [& args]
       (episode [tag (:options ep)]
-               (dosync (alter *episode-ref* assoc :arc (:arc ep)))
+               (vswap! *episode* assoc :arc (:arc ep))
                (apply f args)))))
