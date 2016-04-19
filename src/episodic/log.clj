@@ -10,8 +10,9 @@
   (let [s (-> d pp/pprint with-out-str)]
     (.substring s 0 (dec (.length s)))))
 
-(defn print-episode [m]
-  (let [v #(str % \space (% m))
+(defn print-episode [f]
+  (let [m (f)
+        v #(str % \space (% m))
         dv #(str % \space (inst-str (% m)))
         pp (fn [t]
              (when-let [v (t m)]
@@ -88,20 +89,19 @@
                (if (fn? rt#)
                  (rt# @*episode-ref*)
                  (throw t#))))
-           (finally (->> (fn [m#]
-                           (assoc m#
-                             :sec (-> (System/nanoTime) (- start-nanos#) (/ 1e9) (max 0.001))
-                             :end (java.util.Date.)
-                             :summary (->> m#
-                                           :log
-                                           (mapcat (partial take (if (:error m#)
-                                                                   ~(opt :log-level-error)
-                                                                   ~(opt :log-level-normal))))
-                                           (reduce summarize))))
-                         (alter *episode-ref*)
-                         dosync
-                         (partial print-episode)
-                         (.execute print-pool))))))))
+           (finally (-> (fn [m#]
+                          (assoc m#
+                            :sec (-> (System/nanoTime) (- start-nanos#) (/ 1e9) (max 0.001))
+                            :end (java.util.Date.)
+                            :summary (->> m#
+                                          :log
+                                          (mapcat (partial take (if (:error m#)
+                                                                  ~(opt :log-level-error)
+                                                                  ~(opt :log-level-normal))))
+                                          (reduce summarize))))
+                        (partial @*episode-ref*)
+                        (->> (partial print-episode)
+                             (.execute print-pool)))))))))
 
 (defn note* [& xs]
   (alter *episode-ref* update-in [:log] conj xs)
