@@ -21,7 +21,7 @@
                (when-let [v (t m)]
                  (println t)
                  (pp/pprint v)))]
-      (println (str \newline  "{" (v :tag)) (v :arc) (dv :start))
+      (println (str \newline  "{" (v :tag)) (dv :start))
       (pp :summary)
       (pp :error)
       (println :options (update (:options m) :rethrow #(if (fn? %) :fn %)))
