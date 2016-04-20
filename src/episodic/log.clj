@@ -2,6 +2,7 @@
   (:require [clojure.pprint :as pp]
             [clojure.stacktrace :as cs])
   (:import [java.util.concurrent
+            ThreadFactory
             ThreadPoolExecutor
             ThreadPoolExecutor$DiscardPolicy
             ArrayBlockingQueue]))
@@ -28,10 +29,17 @@
       (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)
       (.flush *out*))))
 
-(def print-pool (ThreadPoolExecutor. 0 1
-                                     5 java.util.concurrent.TimeUnit/MINUTES
-                                     (ArrayBlockingQueue. 8)
-                                     (ThreadPoolExecutor$DiscardPolicy.)))
+(def print-pool
+  (ThreadPoolExecutor. 0 1
+                       5 java.util.concurrent.TimeUnit/MINUTES
+                       (ArrayBlockingQueue. 8)
+                       (reify ThreadFactory
+                         (newThread [_ runnable]
+                                    (doto (Thread. runnable)
+                                      (.setName (str ::print-thread))
+                                      (.setPriority Thread/MIN_PRIORITY)
+                                      (.setDaemon true))))
+                       (ThreadPoolExecutor$DiscardPolicy.)))
 
 (defn merge-fn [x y]
   (cond (coll? x) (into x y)
