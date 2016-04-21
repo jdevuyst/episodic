@@ -1,12 +1,14 @@
 # Episodic.Log
 
-An opinionated logging library for Clojure.
+An opinionated, yet flexible, logging library for Clojure.
 
 ## Usage
 
-FIXME
+Documentation is provided in the [episodic.log](src/episodic/log.clj) namespace.
 
-[![Clojars Project](http://clojars.org/episodic-log/latest-version.svg)]
+To install, add the following dependency to [project.clj](http://leiningen.org) or [build.boot](http://boot-clj.com):
+
+![Clojars Project](http://clojars.org/episodic-log/latest-version.svg)
 
 ## License
 
