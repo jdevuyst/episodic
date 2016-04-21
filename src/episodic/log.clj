@@ -120,9 +120,9 @@
              (deliver episode-map# (compile# t#))
              (when-let [rt# ~(opt :rethrow)]
                (if (fn? rt#)
-                 (rt# @@episode-map#)
+                 (rt# t# @episode-map#)
                  (throw (ex-info (str "rethrow in " ~tag)
-                                 {:episode @@episode-map#}
+                                 {:episode @episode-map#}
                                  t#)))))
            (finally
              (deliver episode-map# (compile# nil))
