@@ -4,9 +4,9 @@
 
 (def global-options
   "Default options for episodes. These take the lowest priority."
-  {:rethrow true
-   :log-level-normal 1
+  {:log-level-normal 1
    :log-level-error 9
+   :rethrow true
    :executor default/executor
    :merge default/merge
    :filter default/filter
@@ -19,8 +19,32 @@
   to the episode macro."
   {:debug-this {:log-level-normal 9}})
 
-(def ^{:dynamic true :doc "Used by the episode macro. Not part of the public API."}
+(def ^{:dynamic true :doc "Not part of the public API"}
+  *log-level*)
+
+(defn set-log-level
+  "Reset the log level for the current episode, provided it hasn't been
+  compiled yet."
+  [n]
+  (reset! *log-level* n))
+
+(def ^{:dynamic true :doc "Not part of the public API"}
   *notes*)
+
+(defn note
+  "Write a sequence of notes to the log. Includes the nth argument in the
+  summary iff n is less than or equal to the applicable log level."
+  [& notes]
+  (vswap! *notes* conj! notes)
+  nil)
+
+(defn post [k & post-its]
+  "Writes a key (of any type) and a sequence of post-its (of any type) to the
+  log. The nth post-it is included in the final summary iff n is <= the
+  applicable log level.
+
+  Equivalent to (note {k [post-it-1]} ... {k [post-it-n]})."
+  (apply note (for [x post-its] {k [x]})))
 
 (defmacro or-some
   "Used by the episode macro. Not part of the public API."
@@ -66,32 +90,33 @@
                                             [k s]))])
                         vec))
         opt #(doto (-> all-opts % first) (assert (str "No option " %)))]
-    `(binding [*notes* (-> [] transient volatile!)]
-       (let [~opt-dict-name ~opts
-             ~@(norm-opts)
-             start-time# (java.util.Date.)
-             start-nanos# (System/nanoTime)
-             episode-map# (promise)
-             compile# (fn [error#]
-                        (let [log# *notes*
-                              end-nanos# (System/nanoTime)
-                              thread-id# (.getId (Thread/currentThread))]
-                          (delay {:tag ~tag
-                                  :thread-id thread-id#
-                                  :options ~opt-dict-name
-                                  :start start-time#
-                                  :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
-                                  :end (java.util.Date.)
-                                  :notes (->> @log#
-                                              persistent!
-                                              (mapcat (partial take (if error#
-                                                                      ~(opt :log-level-error)
-                                                                      ~(opt :log-level-normal))))
-                                              (reduce ~(opt :merge)))
-                                  :error (some-> error# Throwable->map)})))]
+    `(let [~opt-dict-name ~opts
+           ~@(norm-opts)
+           notes# (-> [] transient volatile!)
+           log-level# (atom ~(opt :log-level-normal))
+           start-time# (java.util.Date.)
+           start-nanos# (System/nanoTime)
+           episode-map# (promise)
+           compile# (fn [error#]
+                      (let [end-nanos# (System/nanoTime)
+                            thread-id# (.getId (Thread/currentThread))]
+                        (delay {:tag ~tag
+                                :thread-id thread-id#
+                                :options ~opt-dict-name
+                                :start start-time#
+                                :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
+                                :end (java.util.Date.)
+                                :notes (->> @notes#
+                                            persistent!
+                                            (mapcat (partial take @log-level#))
+                                            (reduce ~(opt :merge)))
+                                :error (some-> error# Throwable->map)})))]
+       (binding [*notes* notes#
+                 *log-level* log-level#]
          (try
            ~@body
            (catch Throwable t#
+             (set-log-level ~(opt :log-level-error))
              (deliver episode-map# (compile# t#))
              (when-let [rt# ~(opt :rethrow)]
                (if (fn? rt#)
@@ -106,18 +131,3 @@
                           (binding [*out* (~(opt :get-writer) m#)
                                     *err* m#]
                             (~(opt :print) m#))))))))))
-
-(defn note
-  "Write a sequence of notes to the log. Includes the nth argument in the
-  summary iff n is less than or equal to the applicable log level."
-  [& notes]
-  (vswap! *notes* conj! notes)
-  nil)
-
-(defn post [k & post-its]
-  "Writes a key (of any type) and a sequence of post-its (of any type) to the
-  log. The nth post-it is included in the final summary iff n is <= the
-  applicable log level.
-
-  Equivalent to (note {k [post-it-1]} ... {k [post-it-n]})."
-  (apply note (for [x post-its] {k [x]})))
