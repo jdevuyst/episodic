@@ -29,7 +29,7 @@
   Equivalent to (note {k [post-it-1]} ... {k [post-it-n]})."
   (apply note (for [x post-its] {k [x]})))
 
-(def global-options
+(def ^:dynamic *global-options*
   "Default options for episodes. These take the lowest priority."
   {:default-log-level 1
    :catch (fn [_ _]
@@ -41,9 +41,9 @@
    :get-writer (constantly *out*)
    :print opts/pretty-print})
 
-(def tag-options
+(def ^:dynamic *tag-options*
   "Overwrite options of episodes with specific tags. These are higher priority
-  than global-options but lower priority than options that are directly passed
+  than *global-options* but lower priority than options that are directly passed
   to the episode macro."
   {:debug-this {:default-log-level 9}})
 
@@ -59,8 +59,8 @@
   post-its are then compiled into a single map—the summary.
 
   The first vector is a mandatory tag (to identify the kind of episode) and an
-  optional map of options. If an option is omitted here then tag-options or
-  global-options is consulted.
+  optional map of options. If an option is omitted here then *tag-options* or
+  *global-options* is consulted.
 
   Options:
   - :catch Exception handler
@@ -76,13 +76,13 @@
   exception or determining the return value."
   [[tag {:as opts}] & body]
   (let [opt-dict-name (gensym 'opts)
-        all-opts (into {} (for [k (keys global-options)]
+        all-opts (into {} (for [k (keys *global-options*)]
                             [k [(-> k name gensym) k]]))
         norm-opts (fn []
                     (-> (mapcat (fn [[s k]]
-                                  [s `(or-some (~k (get tag-options ~tag))
+                                  [s `(or-some (~k (get *tag-options* ~tag))
                                                (~k ~opt-dict-name)
-                                               (~k global-options))])
+                                               (~k *global-options*))])
                                 (vals all-opts))
                         (concat [opt-dict-name
                                  (into {} (for [[s k _ _] (vals all-opts)]
