@@ -1,6 +1,7 @@
 (ns episodic.log.default
-  (:refer-clojure :exclude [print merge])
-  (:require [clojure.pprint :as pp]
+  (:refer-clojure :exclude [merge filter print])
+  (:require [clojure.string :as str]
+            [clojure.pprint :as pp]
             [clojure.stacktrace :as cs])
   (:import [java.util.concurrent
             ThreadFactory
@@ -22,12 +23,6 @@
                                       (.setDaemon true))))
                        (ThreadPoolExecutor$DiscardPolicy.)))
 
-(defn- merge-other
-  [x y]
-  (cond (coll? x) (into x y)
-        (= x y) x
-        :else (throw (IllegalArgumentException. (str "(not= " y " " x ")")))))
-
 (defn merge
   "Merges maps using Clojure's merge-with. Non-maps are merged as follows:
   - Collections are merged using into
@@ -35,31 +30,31 @@
   - Otherwise a merge error is noted inline with the ::failed-to-merge keyword."
   ([] {})
   ([acc el] (try
-              (merge-with merge-other acc el)
+              (merge-with #(cond (coll? %1) (into %1 %2)
+                                 (= %1 %2) %1
+                                 :else (throw (IllegalArgumentException.
+                                                (str "(not= " %1 " " %2 ")"))))
+                          acc
+                          el)
               (catch IllegalArgumentException e
                 (merge-with into acc {::failed-to-merge [el]})))))
 
-(defn get-writer
-  "Always returns the current value of *out*."
-  [_]
-  *out*)
+(def filter "Keeps all summaries as-is" identity)
 
-(defn- inst-str [d]
-  (let [s (-> d prn with-out-str)]
-    (.substring s 0 (dec (.length s)))))
+(def get-writer "Always returns *out*" (constantly *out*))
 
 (defn print
   "Pretty-prints an episode summary. Prints an empty line before and after the
   summary. Could be replaced by prn for speed, or to avoid multi-line output."
   [m]
   (let [v #(str % \space (% m))
-        dv #(str % \space (inst-str (% m)))
+        dv #(str % \space (-> m % prn with-out-str str/trim-newline))
         pp (fn [t]
              (when-let [v (t m)]
                (println t)
                (pp/pprint v)))]
     (println (str \newline  "{" (v :tag)) (dv :start))
-    (pp :summary)
+    (pp :notes)
     (pp :error)
     (println :options (update (:options m) :rethrow #(if (fn? %) :fn %)))
     (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)

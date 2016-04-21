@@ -9,6 +9,7 @@
    :log-level-error 9
    :executor default/executor
    :merge default/merge
+   :filter default/filter
    :get-writer default/get-writer
    :print default/print})
 
@@ -42,6 +43,7 @@
   - :log-level-error is the log level when an exception is thrown
   - :executor ThreadPoolExecutor for writing the summary
   - :merge Reducer for compiling the summary
+  - :filter Function to cut parts of the summary for printing; return nil to skip printing
   - :get-writer Function from summaries to a java.io.Writer object
   - :print Function that, given a summary, prints to *out*
 
@@ -80,12 +82,12 @@
                                   :start start-time#
                                   :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
                                   :end (java.util.Date.)
-                                  :summary (->> @log#
-                                                persistent!
-                                                (mapcat (partial take (if error#
-                                                                        ~(opt :log-level-error)
-                                                                        ~(opt :log-level-normal))))
-                                                (reduce ~(opt :merge)))
+                                  :notes (->> @log#
+                                              persistent!
+                                              (mapcat (partial take (if error#
+                                                                      ~(opt :log-level-error)
+                                                                      ~(opt :log-level-normal))))
+                                              (reduce ~(opt :merge)))
                                   :error (some-> error# Throwable->map)})))]
          (try
            ~@body
@@ -100,8 +102,10 @@
            (finally
              (deliver episode-map# (compile# nil))
              (.execute ~(opt :executor)
-                       #(binding [*out* (~(opt :get-writer) @@episode-map#)]
-                          (~(opt :print) @@episode-map#)))))))))
+                       #(when-let [m# (~(opt :filter) @@episode-map#)]
+                          (binding [*out* (~(opt :get-writer) m#)
+                                    *err* m#]
+                            (~(opt :print) m#))))))))))
 
 (defn note
   "Write a sequence of notes to the log. Includes the nth argument in the
