@@ -2,23 +2,6 @@
   "Opinionated logging library"
   (:require [episodic.log.default :as default]))
 
-(def global-options
-  "Default options for episodes. These take the lowest priority."
-  {:log-level-normal 1
-   :log-level-error 9
-   :rethrow true
-   :executor default/executor
-   :merge default/merge
-   :filter default/filter
-   :get-writer default/get-writer
-   :print default/print})
-
-(def tag-options
-  "Overwrite options of episodes with specific tags. These are higher priority
-  than global-options but lower priority than options that are directly passed
-  to the episode macro."
-  {:debug-this {:log-level-normal 9}})
-
 (def ^{:dynamic true :doc "Not part of the public API"}
   *log-level*)
 
@@ -46,6 +29,24 @@
   Equivalent to (note {k [post-it-1]} ... {k [post-it-n]})."
   (apply note (for [x post-its] {k [x]})))
 
+(def global-options
+  "Default options for episodes. These take the lowest priority."
+  {:default-log-level 1
+   :catch (fn [err d]
+            (set-log-level 9)
+            nil)
+   :executor default/executor
+   :merge default/merge
+   :filter default/filter
+   :get-writer default/get-writer
+   :print default/print})
+
+(def tag-options
+  "Overwrite options of episodes with specific tags. These are higher priority
+  than global-options but lower priority than options that are directly passed
+  to the episode macro."
+  {:debug-this {:default-log-level 9}})
+
 (defmacro or-some
   "Used by the episode macro. Not part of the public API."
   ([] nil)
@@ -62,19 +63,17 @@
   global-options is consulted.
 
   Options:
-  - :retrow - false, true, or a function
-  - :log-level-normal is the log level for when no exception is thrown
-  - :log-level-error is the log level when an exception is thrown
+  - :catch Exception handler
+  - :default-log-level is the initial log level
   - :executor ThreadPoolExecutor for writing the summary
   - :merge Reducer for compiling the summary
   - :filter Function to cut parts of the summary for printing; return nil to skip printing
   - :get-writer Function from summaries to a java.io.Writer object
   - :print Function that, given a summary, prints to *out*
 
-  If :rethrow is false then exceptions are contained within the episode. If true
-  then the exception is rethrown (after wrapping with ex-info). The value for
-  :rethrow can also be a unary function that is called with the summary if an
-  exception is thrown."
+  :catch is called when a Throwable is thrown in an episode. Typically the
+  log level is changed at this point. :catch also allows for rethrowing the
+  exception or determining the return value."
   [[tag {:as opts}] & body]
   (let [opt-dict-name (gensym 'opts)
         all-opts (into {} (for [k (keys global-options)]
@@ -93,37 +92,32 @@
     `(let [~opt-dict-name ~opts
            ~@(norm-opts)
            notes# (-> [] transient volatile!)
-           log-level# (atom ~(opt :log-level-normal))
+           log-level# (atom ~(opt :default-log-level))
            start-time# (java.util.Date.)
            start-nanos# (System/nanoTime)
            episode-map# (promise)
            compile# (fn [error#]
                       (let [end-nanos# (System/nanoTime)
                             thread-id# (.getId (Thread/currentThread))]
-                        (delay {:tag ~tag
-                                :thread-id thread-id#
-                                :options ~opt-dict-name
-                                :start start-time#
-                                :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
-                                :end (java.util.Date.)
-                                :notes (->> @notes#
-                                            persistent!
-                                            (mapcat (partial take @log-level#))
-                                            (reduce ~(opt :merge)))
-                                :error (some-> error# Throwable->map)})))]
+                        (delay (let [final-log-level# @log-level#]
+                                 {:tag ~tag
+                                  :thread-id thread-id#
+                                  :log-level final-log-level#
+                                  :start start-time#
+                                  :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
+                                  :end (java.util.Date.)
+                                  :notes (->> @notes#
+                                              persistent!
+                                              (mapcat (partial take final-log-level#))
+                                              (reduce ~(opt :merge)))
+                                  :error (some-> error# Throwable->map)}))))]
        (binding [*notes* notes#
                  *log-level* log-level#]
          (try
            ~@body
            (catch Throwable t#
-             (set-log-level ~(opt :log-level-error))
              (deliver episode-map# (compile# t#))
-             (when-let [rt# ~(opt :rethrow)]
-               (if (fn? rt#)
-                 (rt# t# @episode-map#)
-                 (throw (ex-info (str "rethrow in " ~tag)
-                                 {:episode @episode-map#}
-                                 t#)))))
+             (~(opt :catch) t# @episode-map#))
            (finally
              (deliver episode-map# (compile# nil))
              (.execute ~(opt :executor)

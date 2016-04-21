@@ -53,9 +53,8 @@
              (when-let [v (t m)]
                (println t)
                (pp/pprint v)))]
-    (println (str \newline  "{" (v :tag)) (dv :start))
+    (println (str \newline  "{" (v :tag)) (v :log-level) (dv :start))
     (pp :notes)
     (pp :error)
-    (println :options (update (:options m) :rethrow #(if (fn? %) :fn %)))
     (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)
     (.flush *out*)))
