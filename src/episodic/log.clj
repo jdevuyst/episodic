@@ -1,6 +1,6 @@
 (ns episodic.log
   "Opinionated logging library"
-  (:require [episodic.log.default :as default]))
+  (:require [episodic.log.options :as opts]))
 
 (def ^{:dynamic true :doc "Not part of the public API"}
   *log-level*)
@@ -32,14 +32,14 @@
 (def global-options
   "Default options for episodes. These take the lowest priority."
   {:default-log-level 1
-   :catch (fn [err d]
+   :catch (fn [_ _]
             (set-log-level 9)
             nil)
-   :executor default/executor
-   :merge default/merge
-   :filter default/filter
-   :get-writer default/get-writer
-   :print default/print})
+   :executor opts/lossy-executor
+   :merge opts/merge-into
+   :filter identity
+   :get-writer (constantly *out*)
+   :print opts/pretty-print})
 
 (def tag-options
   "Overwrite options of episodes with specific tags. These are higher priority

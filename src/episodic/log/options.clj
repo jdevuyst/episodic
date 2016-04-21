@@ -1,5 +1,4 @@
-(ns episodic.log.default
-  (:refer-clojure :exclude [merge filter print])
+(ns episodic.log.options
   (:require [clojure.string :as str]
             [clojure.pprint :as pp]
             [clojure.stacktrace :as cs])
@@ -9,7 +8,7 @@
             ThreadPoolExecutor$DiscardPolicy
             ArrayBlockingQueue]))
 
-(def executor
+(def lossy-executor
   "This ThreadPoolExecutor uses a single low-priority daemon thread, and
   discards tasks if tasks are scheduled faster than the system can handle."
   (ThreadPoolExecutor. 0 1
@@ -23,7 +22,7 @@
                                       (.setDaemon true))))
                        (ThreadPoolExecutor$DiscardPolicy.)))
 
-(defn merge
+(defn merge-into
   "Merges maps using Clojure's merge-with. Non-maps are merged as follows:
   - Collections are merged using into
   - For other identical values, only one is kept
@@ -39,11 +38,7 @@
               (catch IllegalArgumentException e
                 (merge-with into acc {::failed-to-merge [el]})))))
 
-(def filter "Keeps all summaries as-is" identity)
-
-(def get-writer "Always returns *out*" (constantly *out*))
-
-(defn print
+(defn pretty-print
   "Pretty-prints an episode summary. Prints an empty line before and after the
   summary. Could be replaced by prn for speed, or to avoid multi-line output."
   [m]
