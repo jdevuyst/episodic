@@ -36,8 +36,8 @@
             (set-log-level 9)
             nil)
    :executor opts/lossy-executor
-   :merge opts/merge-into
-   :filter identity
+   :transducer identity
+   :reducer opts/merge-into
    :get-writer (constantly *out*)
    :print opts/pretty-print})
 
@@ -66,8 +66,8 @@
   - :catch Exception handler
   - :default-log-level is the initial log level
   - :executor ThreadPoolExecutor for writing the summary
-  - :merge Reducer for compiling the summary
-  - :filter Function to cut parts of the summary for printing; return nil to skip printing
+  - :transducer Opportunity to rewrite notes before they are summarized
+  - :reducer Reducer for compiling the summary
   - :get-writer Function from summaries to a java.io.Writer object
   - :print Function that, given a summary, prints to *out*
 
@@ -95,7 +95,7 @@
            log-level# (atom ~(opt :default-log-level))
            start-time# (java.util.Date.)
            start-nanos# (System/nanoTime)
-           episode-map# (promise)
+           summary# (promise)
            compile# (fn [error#]
                       (let [end-nanos# (System/nanoTime)
                             thread-id# (.getId (Thread/currentThread))]
@@ -106,22 +106,22 @@
                                   :start start-time#
                                   :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
                                   :end (java.util.Date.)
-                                  :notes (->> @notes#
-                                              persistent!
-                                              (mapcat (partial take final-log-level#))
-                                              (reduce ~(opt :merge)))
+                                  :notes (transduce (comp (mapcat (partial take final-log-level#))
+                                                          ~(opt :transducer))
+                                                    ~(opt :reducer)
+                                                    (persistent! @notes#))
                                   :error (some-> error# Throwable->map)}))))]
        (binding [*notes* notes#
                  *log-level* log-level#]
          (try
            ~@body
            (catch Throwable t#
-             (deliver episode-map# (compile# t#))
-             (~(opt :catch) t# @episode-map#))
+             (deliver summary# (compile# t#))
+             (~(opt :catch) t# @summary#))
            (finally
-             (deliver episode-map# (compile# nil))
+             (deliver summary# (compile# nil))
              (.execute ~(opt :executor)
-                       #(when-let [m# (~(opt :filter) @@episode-map#)]
-                          (binding [*out* (~(opt :get-writer) m#)
-                                    *err* m#]
-                            (~(opt :print) m#))))))))))
+                       #(when-some [writer# (some-> @@summary#
+                                                    (~(opt :get-writer)))]
+                                   (binding [*out* writer# *err* writer#]
+                                     (~(opt :print) @@summary#))))))))))

@@ -28,6 +28,7 @@
   - For other identical values, only one is kept
   - Otherwise a merge error is noted inline with the ::failed-to-merge keyword."
   ([] {})
+  ([x] x)
   ([acc el] (try
               (merge-with #(cond (coll? %1) (into %1 %2)
                                  (= %1 %2) %1
