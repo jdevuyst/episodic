@@ -9,16 +9,17 @@
   "Reset the log level for the current episode, provided it hasn't been
   compiled yet."
   [n]
-  (reset! *log-level* n))
+  (reset! *log-level* n)
+  nil)
 
 (def ^{:dynamic true :doc "Not part of the public API"}
-  *notes*)
+  *log*)
 
 (defn note
   "Write a sequence of notes to the log. Includes the nth argument in the
   summary iff n is less than or equal to the applicable log level."
   [& notes]
-  (vswap! *notes* conj! notes)
+  (*log* notes)
   nil)
 
 (defn post [k & post-its]
@@ -32,9 +33,8 @@
 (def ^:dynamic *global-options*
   "Default options for episodes. These take the lowest priority."
   {:default-log-level 1
-   :catch (fn [_ _]
-            (set-log-level 9)
-            nil)
+   :logger opts/volatile-logger
+   :catch (fn [_ _] (set-log-level 9))
    :executor opts/lossy-executor
    :transducer identity
    :reducer opts/merge-into
@@ -63,7 +63,7 @@
   *global-options* is consulted.
 
   Options:
-  - :catch Exception handler
+  - :catch Error handler, with a Throwable and a delay of the summary for args
   - :default-log-level is the initial log level
   - :executor ThreadPoolExecutor for writing the summary
   - :transducer Opportunity to rewrite notes before they are summarized
@@ -91,7 +91,7 @@
         opt #(doto (-> all-opts % first) (assert (str "No option " %)))]
     `(let [~opt-dict-name ~opts
            ~@(norm-opts)
-           notes# (-> [] transient volatile!)
+           log# (~(opt :logger))
            log-level# (atom ~(opt :default-log-level))
            start-time# (java.util.Date.)
            start-nanos# (System/nanoTime)
@@ -109,9 +109,9 @@
                                   :notes (transduce (comp (mapcat (partial take final-log-level#))
                                                           ~(opt :transducer))
                                                     ~(opt :reducer)
-                                                    (persistent! @notes#))
+                                                    (log#))
                                   :error (some-> error# Throwable->map)}))))]
-       (binding [*notes* notes#
+       (binding [*log* log#
                  *log-level* log-level#]
          (try
            ~@body

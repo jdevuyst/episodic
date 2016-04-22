@@ -1,4 +1,4 @@
-(defproject episodic-log "0.2.1"
+(defproject episodic-log "0.2.2-SNAPSHOT"
   :description "An opinionated logging library for Clojure"
   :url "https://github.com/jdevuyst/episodic"
   :license {:name "Eclipse Public License"

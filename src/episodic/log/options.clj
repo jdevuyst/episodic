@@ -8,6 +8,18 @@
             ThreadPoolExecutor$DiscardPolicy
             ArrayBlockingQueue]))
 
+(defn volatile-logger []
+  (let [!v (-> [] transient volatile!)]
+    (fn
+      ([] (persistent! @!v))
+      ([x] (vswap! !v conj! x)))))
+
+(defn ref-logger []
+  (let [r (ref [])]
+    (fn
+      ([] @r)
+      ([x] (alter r conj x)))))
+
 (def lossy-executor
   "This ThreadPoolExecutor uses a single low-priority daemon thread, and
   discards tasks if tasks are scheduled faster than the system can handle."
