@@ -31,7 +31,7 @@
 (def ^:dynamic *global-options*
   "Default options for episodes. These take the lowest priority."
   {:default-log-level 1
-   :logger opts/volatile-logger
+   :logger opts/unsafe-logger
    :catch (fn [e _] (set-log-level 9))
    :executor opts/lossy-executor
    :transducer identity

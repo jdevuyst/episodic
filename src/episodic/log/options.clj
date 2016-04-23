@@ -2,19 +2,25 @@
   (:require [clojure.string :as str]
             [clojure.pprint :as pp]
             [clojure.stacktrace :as cs])
-  (:import [java.util.concurrent
+  (:import [java.util ArrayList]
+           [java.util.concurrent
             ThreadFactory
             ThreadPoolExecutor
             ThreadPoolExecutor$DiscardPolicy
             ArrayBlockingQueue]))
 
-(defn volatile-logger []
-  (let [!v (-> [] transient volatile!)]
+(defn unsafe-logger
+  "Logs to a mutable list. Not thread-safe. May lead to problems when used in
+  dosync, depending on the reducer."
+  []
+  (let [a (ArrayList.)]
     (fn
-      ([] (persistent! @!v))
-      ([x] (vswap! !v conj! x)))))
+      ([] a)
+      ([x] (.add a x)))))
 
-(defn ref-logger []
+(defn ref-logger
+  "Logs to a vector inside a ref."
+  []
   (let [r (ref [])]
     (fn
       ([] @r)
