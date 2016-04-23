@@ -2,18 +2,16 @@
   "Opinionated logging library"
   (:require [episodic.log.options :as opts]))
 
-(def ^{:dynamic true :doc "Not part of the public API"}
-  *log-level*)
+(def ^{:private true :dynamic true} *log-level*)
 
 (defn set-log-level
   "Reset the log level for the current episode, provided it hasn't been
   compiled yet."
   [n]
-  (reset! *log-level* n)
+  (vreset! *log-level* n)
   nil)
 
-(def ^{:dynamic true :doc "Not part of the public API"}
-  *log*)
+(def ^{:dynamic true :private true} *log*)
 
 (defn note
   "Write a sequence of notes to the log. Includes the nth argument in the
@@ -34,10 +32,11 @@
   "Default options for episodes. These take the lowest priority."
   {:default-log-level 1
    :logger opts/volatile-logger
-   :catch (fn [_ _] (set-log-level 9))
+   :catch (fn [e _] (set-log-level 9))
    :executor opts/lossy-executor
    :transducer identity
    :reducer opts/merge-into
+   :transformer opts/default-transformer
    :get-writer (constantly *out*)
    :print opts/pretty-print})
 
@@ -68,6 +67,7 @@
   - :executor ThreadPoolExecutor for writing the summary
   - :transducer Opportunity to rewrite notes before they are summarized
   - :reducer Reducer for compiling the summary
+  - :transformer Merge context, the result of reducer, and the episode exception
   - :get-writer Function from summaries to a java.io.Writer object
   - :print Function that, given a summary, prints to *out*
 
@@ -92,34 +92,28 @@
     `(let [~opt-dict-name ~opts
            ~@(norm-opts)
            log# (~(opt :logger))
-           log-level# (atom ~(opt :default-log-level))
-           start-time# (java.util.Date.)
-           start-nanos# (System/nanoTime)
-           summary# (promise)
-           compile# (fn [error#]
-                      (let [end-nanos# (System/nanoTime)
-                            thread-id# (.getId (Thread/currentThread))]
-                        (delay (let [final-log-level# @log-level#]
-                                 {:tag ~tag
-                                  :thread-id thread-id#
-                                  :log-level final-log-level#
-                                  :start start-time#
-                                  :sec (-> end-nanos# (- start-nanos#) (/ 1e9) (max 0.001))
-                                  :end (java.util.Date.)
-                                  :notes (transduce (comp (mapcat (partial take final-log-level#))
-                                                          ~(opt :transducer))
-                                                    ~(opt :reducer)
-                                                    (log#))
-                                  :error (some-> error# Throwable->map)}))))]
+           log-level# (volatile! ~(opt :default-log-level))
+           commit-tr-context# (~(opt :transformer) ~tag)
+           summary# (volatile! nil)
+           commit# (fn [error#]
+                     (let [tr# (commit-tr-context# error#)]
+                       (->> (transduce (comp (mapcat (partial take @log-level#))
+                                             ~(opt :transducer))
+                                       ~(opt :reducer)
+                                       (log#))
+                            tr#
+                            delay
+                            (vreset! summary#))))]
        (binding [*log* log#
                  *log-level* log-level#]
          (try
-           ~@body
+           (let [retval# (do ~@body)]
+             (commit# nil)
+             retval#)
            (catch Throwable t#
-             (deliver summary# (compile# t#))
+             (commit# t#)
              (~(opt :catch) t# @summary#))
            (finally
-             (deliver summary# (compile# nil))
              (.execute ~(opt :executor)
                        #(when-some [writer# (some-> @@summary#
                                                     (~(opt :get-writer)))]

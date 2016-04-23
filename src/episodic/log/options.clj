@@ -34,6 +34,21 @@
                                       (.setDaemon true))))
                        (ThreadPoolExecutor$DiscardPolicy.)))
 
+(defn default-transformer [tag]
+  (let [thread-id (.getId (Thread/currentThread))
+        start-time (java.util.Date.)
+        start-nanos (System/nanoTime)]
+    (fn [e]
+      (let [context {:tag tag
+                     :thread-id thread-id
+                     :start start-time
+                     :end (java.util.Date.)
+                     :millis (/ (- (System/nanoTime) start-nanos) 1e6)}]
+        (fn [m]
+          (cond-> {:notes m
+                   :context context}
+                  e (assoc :error (Throwable->map e))))))))
+
 (defn merge-into
   "Merges maps using Clojure's merge-with. Non-maps are merged as follows:
   - Collections are merged using into
@@ -51,18 +66,7 @@
               (catch IllegalArgumentException e
                 (merge-with into acc {::failed-to-merge [el]})))))
 
-(defn pretty-print
-  "Pretty-prints an episode summary. Prints an empty line before and after the
-  summary. Could be replaced by prn for speed, or to avoid multi-line output."
-  [m]
-  (let [v #(str % \space (% m))
-        dv #(str % \space (-> m % prn with-out-str str/trim-newline))
-        pp (fn [t]
-             (when-let [v (t m)]
-               (println t)
-               (pp/pprint v)))]
-    (println (str \newline  "{" (v :tag)) (v :log-level) (dv :start))
-    (pp :notes)
-    (pp :error)
-    (println (v :thread-id) (v :sec) (str (dv :end) "}") \newline)
-    (.flush *out*)))
+(defn pretty-print [m]
+  (println)
+  (pp/pprint m)
+  (println))
