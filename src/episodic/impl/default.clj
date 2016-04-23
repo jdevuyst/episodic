@@ -1,30 +1,11 @@
-(ns episodic.log.options
-  (:require [clojure.string :as str]
-            [clojure.pprint :as pp]
-            [clojure.stacktrace :as cs])
-  (:import [java.util ArrayList]
-           [java.util.concurrent
+(ns episodic.impl.default
+  (:require [episodic.impl :refer :all]
+            [clojure.pprint :as pp])
+  (:import [java.util.concurrent
             ThreadFactory
             ThreadPoolExecutor
             ThreadPoolExecutor$DiscardPolicy
             ArrayBlockingQueue]))
-
-(defn unsafe-logger
-  "Logs to a mutable list. Not thread-safe. May lead to problems when used in
-  dosync, depending on the reducer."
-  []
-  (let [a (ArrayList.)]
-    (fn
-      ([] a)
-      ([x] (.add a x)))))
-
-(defn ref-logger
-  "Logs to a vector inside a ref."
-  []
-  (let [r (ref [])]
-    (fn
-      ([] @r)
-      ([x] (alter r conj x)))))
 
 (def lossy-executor
   "This ThreadPoolExecutor uses a single low-priority daemon thread, and
@@ -35,25 +16,10 @@
                        (reify ThreadFactory
                          (newThread [_ runnable]
                                     (doto (Thread. runnable)
-                                      (.setName (str ::executor-thread))
+                                      (.setName (str ::lossy-executor))
                                       (.setPriority Thread/MIN_PRIORITY)
                                       (.setDaemon true))))
                        (ThreadPoolExecutor$DiscardPolicy.)))
-
-(defn default-transformer [tag]
-  (let [thread-id (.getId (Thread/currentThread))
-        start-time (java.util.Date.)
-        start-nanos (System/nanoTime)]
-    (fn [e]
-      (let [context {:tag tag
-                     :thread-id thread-id
-                     :start start-time
-                     :end (java.util.Date.)
-                     :millis (/ (- (System/nanoTime) start-nanos) 1e6)}]
-        (fn [m]
-          (cond-> {:notes m
-                   :context context}
-                  e (assoc :error (Throwable->map e))))))))
 
 (defn merge-into
   "Merges maps using Clojure's merge-with. Non-maps are merged as follows:
@@ -72,7 +38,46 @@
               (catch IllegalArgumentException e
                 (merge-with into acc {::failed-to-merge [el]})))))
 
+(def namespaced
+  (map (fn [m]
+         (mapcat (fn [[k v]]
+                   (if (and (keyword? k) (namespace k))
+                     {(-> k namespace keyword) {(-> k name keyword) v}}
+                     {:other {k v}}))
+                 m))))
+
 (defn pretty-print [m]
   (println)
   (pp/pprint m)
   (println))
+
+(defrunner run-with-context [d] [start-time (java.util.Date.)
+                                 start-nanos (System/nanoTime)
+                                 tag *tag*
+                                 thread-id (.getId (Thread/currentThread))]
+  @d
+  (catch Throwable t
+    (note {::error (Throwable->map t)})
+    (set-log-level 9)
+    (throw t))
+  (finally (note {::tag tag
+                  ::thread-id thread-id
+                  ::start start-time
+                  ::end (java.util.Date.)
+                  ::millis (/ (- (System/nanoTime) start-nanos) 1e6)})))
+
+(defrunner run-without-throwing [d] []
+  @d
+  (catch Throwable _))
+
+(defrunner run-and-print [d] [summary *summary*]
+  @d
+  (finally (pretty-print @summary)))
+
+(def options {:logger unsafe-logger
+              :runner (comp (shadow-runner lossy-executor
+                                           run-and-print)
+                            run-without-throwing
+                            run-with-context)
+              :transducer namespaced
+              :reducer merge-into})
