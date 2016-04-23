@@ -46,11 +46,6 @@
   to the episode macro."
   {:debug-this {:default-log-level 9}})
 
-(defmacro or-some
-  "Used by the episode macro. Not part of the public API."
-  ([] nil)
-  ([x & next] `(if-some [x# ~x] x# (or-some ~@next))))
-
 (defmacro episode
   "Start a new episode in which notes (see note) and post-its (see post) can be
   logged for varying log levels. At the end of the episode, a log level is
@@ -58,8 +53,8 @@
   post-its are then compiled into a single map—the summary.
 
   The first vector is a mandatory tag (to identify the kind of episode) and an
-  optional map of options. If an option is omitted here then *tag-options* or
-  *global-options* is consulted.
+  optional inline map of options. When an option is omitted here then
+  *tag-options* or *global-options* is consulted.
 
   Options:
   - :catch Error handler, with a Throwable and a delay of the summary for args
@@ -74,48 +69,33 @@
   :catch is called when a Throwable is thrown in an episode. Typically the
   log level is changed at this point. :catch also allows for rethrowing the
   exception or determining the return value."
-  [[tag {:as opts}] & body]
-  (let [opt-dict-name (gensym 'opts)
-        all-opts (into {} (for [k (keys *global-options*)]
-                            [k [(-> k name gensym) k]]))
-        norm-opts (fn []
-                    (-> (mapcat (fn [[s k]]
-                                  [s `(or-some (~k (get *tag-options* ~tag))
-                                               (~k ~opt-dict-name)
-                                               (~k *global-options*))])
-                                (vals all-opts))
-                        (concat [opt-dict-name
-                                 (into {} (for [[s k _ _] (vals all-opts)]
-                                            [k s]))])
-                        vec))
-        opt #(doto (-> all-opts % first) (assert (str "No option " %)))]
-    `(let [~opt-dict-name ~opts
-           ~@(norm-opts)
-           log# (~(opt :logger))
-           log-level# (volatile! ~(opt :default-log-level))
-           commit-tr-context# (~(opt :transformer) ~tag)
-           summary# (volatile! nil)
-           commit# (fn [error#]
-                     (let [tr# (commit-tr-context# error#)]
-                       (->> (transduce (comp (mapcat (partial take @log-level#))
-                                             ~(opt :transducer))
-                                       ~(opt :reducer)
-                                       (log#))
-                            tr#
-                            delay
-                            (vreset! summary#))))]
-       (binding [*log* log#
-                 *log-level* log-level#]
-         (try
-           (let [retval# (do ~@body)]
-             (commit# nil)
-             retval#)
-           (catch Throwable t#
-             (commit# t#)
-             (~(opt :catch) t# @summary#))
-           (finally
-             (.execute ~(opt :executor)
-                       #(when-some [writer# (some-> @@summary#
-                                                    (~(opt :get-writer)))]
-                                   (binding [*out* writer# *err* writer#]
-                                     (~(opt :print) @@summary#))))))))))
+  [[tag & {:as opts}] & body]
+  `(let [opts# (reduce merge *global-options* [~opts (~tag *tag-options*)])
+         log# ((opts# :logger))
+         log-level# (volatile! (opts# :default-log-level))
+         commit-tr-context# ((opts# :transformer) ~tag)
+         summary# (volatile! nil)
+         commit# (fn [error#]
+                   (->> (transduce (comp (mapcat (partial take @log-level#))
+                                         (opts# :transducer))
+                                   (opts# :reducer)
+                                   (log#))
+                        tr#
+                        delay
+                        (let [tr# (commit-tr-context# error#)])
+                        (vreset! summary#)))]
+     (binding [*log* log#
+               *log-level* log-level#]
+       (try
+         (let [retval# (do ~@body)]
+           (commit# nil)
+           retval#)
+         (catch Throwable t#
+           (commit# t#)
+           ((opts# :catch) t# @summary#))
+         (finally
+           (.execute (opts# :executor)
+                     #(when-some [writer# (some-> @@summary#
+                                                  ((opts# :get-writer)))]
+                                 (binding [*out* writer# *err* writer#]
+                                   ((opts# :print) @@summary#)))))))))
