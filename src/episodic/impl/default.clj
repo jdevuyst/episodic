@@ -28,15 +28,12 @@
   - Otherwise a merge error is noted inline with the ::failed-to-merge keyword."
   ([] {})
   ([x] x)
-  ([acc el] (try
-              (merge-with #(cond (coll? %1) (into %1 %2)
-                                 (= %1 %2) %1
-                                 :else (throw (IllegalArgumentException.
-                                                (str "(not= " %1 " " %2 ")"))))
-                          acc
-                          el)
-              (catch IllegalArgumentException e
-                (merge-with into acc {::failed-to-merge [el]})))))
+  ([x y] (try (cond (map? x) (merge-with merge-into x y)
+                    (coll? x) (into x y)
+                    (= x y) x
+                    :else (throw (IllegalArgumentException.)))
+           (catch IllegalArgumentException _
+             {::failed-to-merge [{x y}]}))))
 
 (def namespaced
   (map (fn [m]
